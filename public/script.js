@@ -11,47 +11,67 @@ document.addEventListener('DOMContentLoaded', () => {
         chatBox.scrollTop = chatBox.scrollHeight;
     }
 
+    let isLoading = false;
+    let loadingMessageId = null;
+
+    function removeLoadingMessage() {
+        if (loadingMessageId && chatBox.contains(loadingMessageId)) {
+            chatBox.removeChild(loadingMessageId);
+            loadingMessageId = null;
+        }
+    }
+
     form.addEventListener('submit', async function (e) {
         e.preventDefault();
+        if (isLoading) return;
+        
         const userMessage = input.value.trim();
         if (!userMessage) return;
+        
         appendMessage('user', userMessage);
         input.value = '';
+        input.disabled = true;
         
-        // Show loading indicator
-        appendMessage('bot', 'Gemini is thinking...');
+        const loadingElement = document.createElement('div');
+        loadingElement.classList.add('message', 'bot', 'loading');
+        loadingElement.textContent = 'Gemini is thinking...';
+        chatBox.appendChild(loadingElement);
+        loadingMessageId = loadingElement;
+        chatBox.scrollTop = chatBox.scrollHeight;
+        
+        isLoading = true;
         
         try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 30000);
+            
             const response = await fetch('/api/chat', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    conversation: [
-                        { role: 'user', content: userMessage }
-                    ]
-                })
+                    conversation: [{ role: 'user', content: userMessage }]
+                }),
+                signal: controller.signal
             });
             
+            clearTimeout(timeoutId);
+            
             if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
+                const errorData = await response.json().catch(() => ({}));
+                throw new Error(errorData.error || `HTTP ${response.status}`);
             }
             
             const data = await response.json();
-            // Remove the loading message
-            const lastMessage = chatBox.lastChild;
-            if (lastMessage && lastMessage.textContent === 'Gemini is thinking...') {
-                chatBox.removeChild(lastMessage);
-            }
+            removeLoadingMessage();
             appendMessage('bot', data.result);
         } catch (error) {
-            // Remove the loading message
-            const lastMessage = chatBox.lastChild;
-            if (lastMessage && lastMessage.textContent === 'Gemini is thinking...') {
-                chatBox.removeChild(lastMessage);
-            }
-            appendMessage('bot', `Error: ${error.message}`);
+            removeLoadingMessage();
+            const msg = error.name === 'AbortError' ? 'Request timeout' : error.message;
+            appendMessage('bot', `Error: ${msg}`);
+        } finally {
+            isLoading = false;
+            input.disabled = false;
+            input.focus();
         }
     });
 });
